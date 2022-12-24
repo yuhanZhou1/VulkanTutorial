@@ -179,6 +179,8 @@ private:
     // Texture
     VkImage textureImage;
     VkDeviceMemory textureImageMemory;
+    VkImageView textureImageView;
+    VkSampler textureSampler;
     
     void initWindow() {
         glfwInit();
@@ -208,12 +210,16 @@ private:
         // Drawing
         createFramebuffers();
         createCommandPool();
+        
         createTextureImage();
+        createTextureImageView();
+        createTextureSampler();
         createVertexBuffer();
         createIndexBuffer();
         createUniformBuffers();
         createDescriptorPool();
         createDescriptorSets();
+        
         createCommandBuffers();
         createSyncObjects();
     }
@@ -330,6 +336,8 @@ private:
     }
 
     void cleanup() {
+        vkDestroySampler(device, textureSampler, nullptr);
+        vkDestroyImageView(device, textureImageView, nullptr);
         vkDestroyImage(device, textureImage, nullptr);
         vkFreeMemory(device, textureImageMemory, nullptr);
         
@@ -474,8 +482,11 @@ private:
             SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
             swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
         }
+        
+        VkPhysicalDeviceFeatures supportedFeatures;
+        vkGetPhysicalDeviceFeatures(device, &supportedFeatures);
 
-        return indices.isComplete() && extensionsSupported && swapChainAdequate;
+        return indices.isComplete() && extensionsSupported && swapChainAdequate && supportedFeatures.samplerAnisotropy;
     }
     
     bool checkDeviceExtensionSupport(VkPhysicalDevice device) {
@@ -557,6 +568,7 @@ private:
         }
         
         VkPhysicalDeviceFeatures deviceFeatures{};
+        deviceFeatures.samplerAnisotropy = VK_TRUE;
         VkDeviceCreateInfo createInfo{};
         createInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
         createInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
@@ -727,28 +739,34 @@ private:
     
     void createImageViews(){
         swapChainImageViews.resize(swapChainImages.size());
+        
         for (size_t i = 0; i < swapChainImages.size(); i++) {
-            VkImageViewCreateInfo imageViewsCreateInfo{};
-            imageViewsCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
-            imageViewsCreateInfo.image = swapChainImages[i];
-            imageViewsCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
-            imageViewsCreateInfo.format = swapChainImageFormat;
-            
-            imageViewsCreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
-            imageViewsCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
-            imageViewsCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
-            imageViewsCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
-            
-            imageViewsCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
-            imageViewsCreateInfo.subresourceRange.baseMipLevel = 0;
-            imageViewsCreateInfo.subresourceRange.levelCount = 1;
-            imageViewsCreateInfo.subresourceRange.baseArrayLayer = 0;
-            imageViewsCreateInfo.subresourceRange.layerCount = 1;
-            
-            if (vkCreateImageView(device, &imageViewsCreateInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS) {
-                throw std::runtime_error("failed to create image views!");
-            }
+            swapChainImageViews[i] = createImageView(swapChainImages[i], swapChainImageFormat);
         }
+    }
+    
+    void createTextureImageView() {
+        textureImageView = createImageView(textureImage, VK_FORMAT_R8G8B8A8_SRGB);
+    }
+    
+    VkImageView createImageView(VkImage image, VkFormat format) {
+        VkImageViewCreateInfo viewInfo{};
+        viewInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        viewInfo.image = image;
+        viewInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        viewInfo.format = format;
+        viewInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+        viewInfo.subresourceRange.baseMipLevel = 0;
+        viewInfo.subresourceRange.levelCount = 1;
+        viewInfo.subresourceRange.baseArrayLayer = 0;
+        viewInfo.subresourceRange.layerCount = 1;
+
+        VkImageView imageView;
+        if (vkCreateImageView(device, &viewInfo, nullptr, &imageView) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create texture image view!");
+        }
+
+        return imageView;
     }
     
     void createGraphicsPipeline(){
@@ -1495,6 +1513,32 @@ private:
         );
         
         endSingleTimeCommands(commandBuffer);
+    }
+    
+    void createTextureSampler() {
+        // 获取硬件属性，判断最大各向异性过滤采样最大值
+        VkPhysicalDeviceProperties properties{};
+        vkGetPhysicalDeviceProperties(physicalDevice, &properties);
+        
+        VkSamplerCreateInfo samplerInfo{};
+        samplerInfo.sType = VK_STRUCTURE_TYPE_SAMPLER_CREATE_INFO;
+        samplerInfo.magFilter = VK_FILTER_LINEAR;
+        samplerInfo.minFilter = VK_FILTER_LINEAR;
+        samplerInfo.addressModeU = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeV = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.addressModeW = VK_SAMPLER_ADDRESS_MODE_REPEAT;
+        samplerInfo.anisotropyEnable = VK_TRUE;
+        samplerInfo.maxAnisotropy = properties.limits.maxSamplerAnisotropy;
+        samplerInfo.borderColor = VK_BORDER_COLOR_INT_OPAQUE_BLACK;     //设定边界颜色
+        samplerInfo.unnormalizedCoordinates = VK_FALSE;
+        samplerInfo.compareEnable = VK_FALSE;
+        samplerInfo.compareOp = VK_COMPARE_OP_ALWAYS;
+        samplerInfo.mipmapMode = VK_SAMPLER_MIPMAP_MODE_LINEAR;
+
+        if (vkCreateSampler(device, &samplerInfo, nullptr, &textureSampler) != VK_SUCCESS) {
+            throw std::runtime_error("failed to create texture sampler!");
+        }
+        
     }
 };
 
